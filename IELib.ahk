@@ -4,11 +4,11 @@ This AHK Library is intended for use when utilizing COM Methods to Internet Expl
 *IMPORTANT*
 Before utilizing this library, the IE object must be invoked via the "IEGet" Function. Please ensure that you are making your IE object handle a global var prior to use in this library.
 
-Version: 2
+Version: 3
 */
 
-IEGet(Name=""){       ;Retrieve pointer to existing IE window/tab. Pass the title of the IE page to this function to initialize it as an object. example, ie:=IEGet("Google")
-
+IEGet(Name="") {       ;Retrieve pointer to existing IE window/tab. Pass the title of the IE page to this function to initialize it as an object. example, ie:=IEGet("Google")
+; Credit to Jethrow AHK forums
     IfEqual, Name,, WinGetTitle, Name, ahk_class IEFrame
         Name := ( Name="New Tab - Windows Internet Explorer" ) ? "about:Tabs"
         : RegExReplace( Name, " - (Windows|Microsoft) Internet Explorer" )
@@ -17,21 +17,23 @@ IEGet(Name=""){       ;Retrieve pointer to existing IE window/tab. Pass the titl
             Return wb
 }
 
-FindIE(ShowMessage, Title){ ;Pass "True/False" to the Showmessage arg and the title of your page to the Title Arg. This will attempt to make the page the IE object, if not able, the item not found tip will show.
+FindIE(ShowMessage, Title) { ;Pass "True/False" to the Showmessage arg and the title of your page to the Title Arg. This will attempt to make the page the IE object, if not able, the item not found tip will show.
  ie := IeGet(Title)
  if (IsObject(ie)=false) &&(ShowMessage=True){
  TrayTip,Item List not found, Can't find the Item List screen!
     return false
-  } 
+  }
  return ie
 }
 
-IeLoad(Browser, Url:=""){
+IeLoad(Browser, Url:="") {
   ;Function Details:
   ;Returns True or False. Will indicate if the process was successful
   ;Parameter 1: Send a pointer to an internet explorer browser
   ;See IEGet on how to get a pointer
   ;Function will wait for a page to load
+  ;Credit to Jethrow AHK Forums
+  
   If !Browser
    return false
   
@@ -65,8 +67,145 @@ IeLoad(Browser, Url:=""){
   
   return false
  }
+  
+CompareNewTitle(NewTitle, ieHandle) {
+	/*
+	compares the old title pull from the PostClickTitleComparison() and compares to the current title. you need to pass it the NewTitle and the same ieHandle
+	*/
+ invalidTitleCount = 0
+ ValidTitleCount = 0
+ Switch = 0
+Loop
+	{
+		WinGetTitle, CurrentTitleName, ahk_class IEFrame
+		StringReplace, CurrentTitleName, CurrentTitleName, %ieHandle%,, all
+		if (NewTitle = CurrentTitleName)
+			ValidTitleCount +=1
+		else
+			InvalidTitleCount +=1
+		if (ValidTitleCount = 500)
+		{
+			Switch = 1
+			break
+		}
+		if (InvalidTitleCount = 500)
+		{
+			Switch = 0
+			break
+		}
+		ToolTip, %NewTitle%...%CurrentTitleName%...CNT func VC: %ValidTitleCount%..INVC: %InvalidtitleCount%...switch: %switch%
+	}
+	if (switch = 1)
+	{
+		return CurrentTitleName
+	} else {
+		return FALSE
+	}
+}
  
-ElementInteraction(ElementID, ElementTag, Browser, Action, ValueToSet, Type){ 
+PostClickTitleComparison(prevName, ieHandle) {
+	/*
+	you must pull the previous IeFrame title as an AHK_class and pass to this function under "PrevName" the ieHandle portion is dedicated to be omitted from the title since COM doesnt like " - Internet Explorer" in the Title.
+	*/
+	count = 0
+	Loop,
+	{
+		WinGetTitle, Name, ahk_class IEFrame
+		StringReplace, Name, Name, %ieHandle%,, all
+		if !(prevName = Name) 
+		{
+			Loop
+			{
+				ToolTip, %prevname%....%Name%.....not equal
+				ie := FindIE(False, CompareNewTitle(Name, ieHandle))
+				if !(ie = False)
+				{
+					return ie
+				}
+				if (ie = False)
+				{
+					WinGetTitle, PrevName, ahk_class IEFrame
+					StringReplace, PrevName, PrevName, %IeHandle%,, all
+				}
+			}
+		}
+		if (prevname = Name)
+		{
+			ToolTip, %prevname%....%Name%.....equal %count%
+			COUNT += 1
+			if (count > 100)
+			{
+				ie := FindIE(False, Name)
+				if !(ie = False)
+				{
+					MsgBox ie not false
+					return ie
+				}
+				if (ie = False)
+				{
+					MsgBox, ie false
+					WinGetTitle, Name, ahk_class IEFrame
+					StringReplace, Name, Name, %IeHandle%,, all
+				}
+			}
+		}
+	}
+}
+
+GetURL() {
+	WinGetTitle, IeTitle, ahk_class IEFrame
+	ControlGetText, Url, Edit1, %IeTitle%
+	return Url
+}
+
+IE_DocumentComplete(ieEventParam, url, ieFinalParam) {
+    global ie
+    if (ie != ieEventParam)
+        s .= "First parameter is a new wrapper object.`n"
+    if (ie == ieFinalParam)
+        s .= "Final parameter is the original wrapper object.`n"
+    if ((disp1:=ComObjUnwrap(ieEventParam)) == (disp2:=ComObjUnwrap(ieFinalParam)))
+        s .= "Both wrapper objects refer to the same IDispatch instance.`n"
+    ObjRelease(disp1), ObjRelease(disp2)
+    MsgBox % s . "Finished loading " ie.Document.title " @ " url
+    ie.Quit()
+    ExitApp
+}
+
+GetWebBrowser() {
+    ; Get a raw pointer to the document object of the top-most IE window.
+    static msg := DllCall("RegisterWindowMessage", "str", "WM_HTML_GETOBJECT")
+    SendMessage msg, 0, 0, Internet Explorer_Server1, ahk_class IEFrame
+    if ErrorLevel = FAIL
+        return  ; IE not found.
+    lResult := ErrorLevel
+    DllCall("oleacc\ObjectFromLresult", "ptr", lResult
+        , "ptr", GUID(IID_IHTMLDocument2,"{332C4425-26CB-11D0-B483-00C04FD90119}")
+        , "ptr", 0, "ptr*", pdoc)
+    
+    ; Query for the WebBrowserApp service. In this particular case,
+    ; the SID and IID are the same, but it isn't always this way.
+    static IID_IWebBrowserApp := "{0002DF05-0000-0000-C000-000000000046}"
+    static SID_SWebBrowserApp := IID_IWebBrowserApp
+    pweb := ComObjQuery(pdoc, SID_SWebBrowserApp, IID_IWebBrowserApp)
+    
+    ; Release the document object pointer.
+    ObjRelease(pdoc)
+    
+    ; Return the WebBrowser object, wrapped for usability:
+    static VT_DISPATCH := 9, F_OWNVALUE := 1
+    return ComObject(VT_DISPATCH, pweb, F_OWNVALUE)
+}
+
+GUID(ByRef GUID, sGUID) { ; Converts a string to a binary GUID and returns its address.
+
+	MsgBox, % guid
+	MsgBox, % sguid
+    VarSetCapacity(GUID, 16, 0)
+    return DllCall("ole32\CLSIDFromString", "wstr", sGUID, "ptr", &GUID) >= 0 ? &GUID : ""
+}
+ 
+ElementInteraction(ElementID, ElementTag, Browser, Action, ValueToSet, Type){
 	/*
 	Arguments are utilized by DOM Elements in IE
 	ElementID: this is the specific Identifier handle you're looking for. This can either be the "Name" or the "ID" of the element itself. Case Sensitive
@@ -76,10 +215,9 @@ ElementInteraction(ElementID, ElementTag, Browser, Action, ValueToSet, Type){
 	ValueToSet: This is only utilized in the "Set" Action. This must be not null to pass appropriately, but will not affect the "Get" and "Click" Portions
 	Type: Specifies the type of input you are using. Currently, this function can only be utilized with "ID" or "Name"
 	*/
-   
-   IfWinNotExist, File Explorer
-		run, explorer.exe
-		
+  
+   ;~ IfWinNotExist, Libraries
+		;~ run, explorer.exe
    if (Type = "ID") 
     {
 		try
@@ -88,14 +226,15 @@ ElementInteraction(ElementID, ElementTag, Browser, Action, ValueToSet, Type){
 			DomObj:=ie.Document
 				
 			Length:=AllItems.Length
-				
 			loop, % Length
 			{
 					ToolTip, %A_index%
-				if (instr(AllItems[A_Index-1].ID,ElementID)){
+				if (instr(AllItems[A_Index-1].ID,ElementID))
+				{
 					my_element:=DomObj.getElementById(ElementID)
 					
-					if (Action="Click"){
+					if (Action="Click")
+					{
 						WinActivate, File Explorer
 						WinMinimize, File Explorer
 						clickLast(ElementID, ie, false)
@@ -108,7 +247,8 @@ ElementInteraction(ElementID, ElementTag, Browser, Action, ValueToSet, Type){
 						return True
 					}
 						   
-					if (Action="Set"){
+					if (Action="Set")
+					{
 						my_element.focus
 						my_element.value:=ValueToSet
 						Sleep, 50
@@ -118,8 +258,15 @@ ElementInteraction(ElementID, ElementTag, Browser, Action, ValueToSet, Type){
 						return True
 					}
 						   
-					if (Action="Get"){
-						return my_element.Value
+					if (Action="Get")
+					{
+						try {
+							value:=my_element.value
+							return my_element.value
+						} catch e {
+							value:= my_element.innerText
+							return my_element.innerText
+						}
 					}
 				}
 			}
@@ -132,7 +279,7 @@ ElementInteraction(ElementID, ElementTag, Browser, Action, ValueToSet, Type){
 			AllItems:=ie.Document.GetElementsByTagName(ElementTag)
 			DomObj:=ie.Document
 			
-			Length:=AllItems.Length
+			Length:=AllItems.Length()
 			
 			Loop % Length
 			{
@@ -168,9 +315,14 @@ ElementInteraction(ElementID, ElementTag, Browser, Action, ValueToSet, Type){
 					}
 						   
 					if (Action="Get"){
-						return my_element.Value
+						try {
+							value:=my_element.value
+							return my_element.value
+						} catch e {
+							value:= my_element.innerText
+							return my_element.innerText
+						}
 					}
-					
 				}
 			}
 		}
@@ -191,7 +343,7 @@ ClickLast(ElementID, Browser, iframe){ ;Still Under Construction
 				AllItems[A_Index-1].contentdocument.getElementById(elementID).Click()
 				IeLoad(Browser)
 				return True
-			} 
+			}
 		}
 	} else {
 		AllItems:=Browser.Document.getElementsByTagName("*")
@@ -204,7 +356,7 @@ ClickLast(ElementID, Browser, iframe){ ;Still Under Construction
 				DomObj.getElementById(elementID).Click()
 				IeLoad(Browser)
 				return True
-			} 
+			}
 		}
 	}
  return False
